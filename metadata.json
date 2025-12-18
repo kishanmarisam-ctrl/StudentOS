@@ -1,0 +1,5 @@
+{
+  "name": "JobRadar",
+  "description": "An agentic AI job scout for students that filters noise and finds high-value career opportunities.",
+  "requestFramePermissions": []
+}
