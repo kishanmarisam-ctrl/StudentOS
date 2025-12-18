@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { UserProfile, MatchResult, StudentBackground } from '../types';
 import { MOCK_JOBS } from '../constants';
 import { evaluateJob } from '../services/matchingEngine';
@@ -7,80 +7,58 @@ import { generateAgentAnalysis } from '../services/geminiService';
 const CareerView: React.FC<{ profile: UserProfile }> = ({ profile: initialProfile }) => {
   const [profile, setProfile] = useState<UserProfile>(initialProfile);
   const [match, setMatch] = useState<MatchResult | null>(null);
-  const [loading, setLoading] = useState(true);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [tempProfile, setTempProfile] = useState<UserProfile>(initialProfile);
+  const [aiSyncing, setAiSyncing] = useState(false);
 
   const isProfileIncomplete = profile.skills.length === 0;
 
+  // Perform local matching synchronously
   useEffect(() => {
-    if (isProfileIncomplete) {
-        setLoading(false);
-        return;
-    }
+    if (isProfileIncomplete) return;
     
-    let isMounted = true;
-    const selectBestOpportunity = async () => {
-      setLoading(true);
-      try {
-        // 1. Evaluation & Filtering
-        const results = MOCK_JOBS.map(job => evaluateJob(job, profile))
-          .filter((res): res is MatchResult => res !== null);
+    // Immediate deterministic match
+    const results = MOCK_JOBS.map(job => evaluateJob(job, profile))
+      .filter((res): res is MatchResult => res !== null);
 
-        // 2. Bucketing Logic
-        const strongMatches = results.filter(r => r.score >= 80).sort((a, b) => b.score - a.score);
-        const mediumMatches = results.filter(r => r.score >= 60 && r.score < 80).sort((a, b) => b.score - a.score);
-        
-        // 3. Rotation & Memory Logic
-        const lastJobId = localStorage.getItem('studentOS_last_job_id');
-        let selected: MatchResult | null = null;
+    const strongMatches = results.filter(r => r.score >= 80).sort((a, b) => b.score - a.score);
+    const mediumMatches = results.filter(r => r.score >= 60 && r.score < 80).sort((a, b) => b.score - a.score);
+    
+    const lastJobId = localStorage.getItem('studentOS_last_job_id');
+    let selected: MatchResult | null = null;
 
-        if (strongMatches.length > 0) {
-            // Pick top strong, unless it was shown last and there is an alternative strong
-            selected = (strongMatches[0].job.id === lastJobId && strongMatches.length > 1) 
-                ? strongMatches[1] 
-                : strongMatches[0];
-        } else if (mediumMatches.length > 0) {
-            // Pick a medium match. If multiple, rotate based on current hour to ensure session variety
-            const hour = new Date().getHours();
-            const index = hour % mediumMatches.length;
-            
-            selected = (mediumMatches[index].job.id === lastJobId && mediumMatches.length > 1)
-                ? mediumMatches[(index + 1) % mediumMatches.length]
-                : mediumMatches[index];
-        }
+    if (strongMatches.length > 0) {
+        selected = (strongMatches[0].job.id === lastJobId && strongMatches.length > 1) ? strongMatches[1] : strongMatches[0];
+    } else if (mediumMatches.length > 0) {
+        const index = new Date().getHours() % mediumMatches.length;
+        selected = (mediumMatches[index].job.id === lastJobId && mediumMatches.length > 1) ? mediumMatches[(index + 1) % mediumMatches.length] : mediumMatches[index];
+    }
 
-        if (selected && isMounted) {
-          localStorage.setItem('studentOS_last_job_id', selected.job.id);
-          
-          setMatch({ 
-            ...selected, 
-            aiAnalysis: 'Synthesizing recommendation...', 
-            totalEvaluated: results.length 
-          });
-          
-          setLoading(false);
+    if (selected) {
+      localStorage.setItem('studentOS_last_job_id', selected.job.id);
+      const initialMatch = { ...selected, aiAnalysis: 'Syncing OS context...', totalEvaluated: results.length };
+      setMatch(initialMatch);
 
-          if (process.env.API_KEY) {
-            const analysis = await generateAgentAnalysis(selected, profile);
-            if (isMounted) {
-              setMatch(prev => prev ? { ...prev, aiAnalysis: analysis } : null);
-            }
-          }
-        } else {
-          setLoading(false);
-        }
-      } catch (err) {
-        setLoading(false);
+      // Async AI enrichment
+      if (process.env.API_KEY) {
+        setAiSyncing(true);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1500);
+
+        generateAgentAnalysis(selected, profile).then(analysis => {
+          clearTimeout(timeoutId);
+          setMatch(prev => prev ? { ...prev, aiAnalysis: analysis } : null);
+          setAiSyncing(false);
+        }).catch(() => {
+          setMatch(prev => prev ? { ...prev, aiAnalysis: 'Recommendation stabilized by local radar.' } : null);
+          setAiSyncing(false);
+        });
+      } else {
+        setMatch(prev => prev ? { ...prev, aiAnalysis: 'Local radar match confirmed.' } : null);
       }
-    };
-
-    // Small delay to simulate "Radar Sweep" feel
-    const timer = setTimeout(selectBestOpportunity, 800);
-    return () => { 
-      isMounted = false; 
-      clearTimeout(timer);
-    };
+    } else {
+      setMatch(null);
+    }
   }, [profile, isProfileIncomplete]);
 
   const handleProfileSave = () => {
@@ -91,17 +69,17 @@ const CareerView: React.FC<{ profile: UserProfile }> = ({ profile: initialProfil
 
   if (isProfileIncomplete || isEditingProfile) {
     return (
-      <div className="space-y-8 animate-in">
+      <div className="space-y-10 animate-in">
         <div className="space-y-2">
-            <p className="text-[10px] font-bold text-slate-300 uppercase tracking-[0.4em]">Calibration</p>
-            <h2 className="text-3xl font-bold tracking-tighter">Career Parameters</h2>
+            <p className="text-[10px] font-bold text-slate-300 uppercase tracking-[0.5em]">Calibration</p>
+            <h2 className="text-4xl font-black tracking-tighter">Career Scope</h2>
         </div>
 
-        <div className="space-y-6 bg-white p-8 rounded-[40px] border border-slate-100 shadow-sm">
-            <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase">Degree / Focus</label>
+        <div className="space-y-8 bg-white p-10 rounded-[48px] border border-slate-100 shadow-xl">
+            <div className="space-y-3">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Target Domain</label>
                 <select 
-                    className="w-full text-lg font-medium outline-none border-b-2 border-slate-50 focus:border-indigo-400 bg-transparent py-2"
+                    className="w-full text-xl font-bold outline-none border-b-2 border-slate-100 focus:border-indigo-400 bg-transparent py-2"
                     value={tempProfile.background}
                     onChange={(e) => setTempProfile({...tempProfile, background: e.target.value as StudentBackground})}
                 >
@@ -109,125 +87,109 @@ const CareerView: React.FC<{ profile: UserProfile }> = ({ profile: initialProfil
                 </select>
             </div>
 
-            <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase">Skills (Comma separated)</label>
+            <div className="space-y-3">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Skill Stack (Comma Separated)</label>
                 <input 
-                    className="w-full text-lg font-medium outline-none border-b-2 border-slate-50 focus:border-indigo-400 bg-transparent py-2"
-                    placeholder="e.g. React, Java, Sales"
+                    className="w-full text-xl font-bold outline-none border-b-2 border-slate-100 focus:border-indigo-400 bg-transparent py-2"
+                    placeholder="e.g. React, Python"
                     value={tempProfile.skills.join(', ')}
                     onChange={(e) => setTempProfile({...tempProfile, skills: e.target.value.split(',').map(s => s.trim()).filter(s => s !== '')})}
                 />
             </div>
 
-            <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase">Job Search Radius: {tempProfile.radiusKm} km</label>
+            <div className="space-y-3">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Max Reach: {tempProfile.radiusKm} km</label>
                 <input 
-                    type="range" min="10" max="200" step="10"
-                    className="w-full h-1 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                    type="range" min="10" max="250" step="10"
+                    className="w-full h-1 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
                     value={tempProfile.radiusKm}
                     onChange={(e) => setTempProfile({...tempProfile, radiusKm: Number(e.target.value)})}
                 />
             </div>
 
-            <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase">Min Expected Salary (Annual ₹)</label>
-                <input 
-                    type="number"
-                    className="w-full text-lg font-medium outline-none border-b-2 border-slate-50 focus:border-indigo-400 bg-transparent py-2"
-                    value={tempProfile.expectedSalary}
-                    onChange={(e) => setTempProfile({...tempProfile, expectedSalary: Number(e.target.value)})}
-                />
-            </div>
-
             <button 
                 onClick={handleProfileSave}
-                className="w-full bg-slate-900 text-white py-4 rounded-3xl font-bold hover:bg-indigo-600 transition-all"
+                className="w-full bg-slate-900 text-white py-5 rounded-[32px] font-bold text-lg hover:bg-indigo-600 shadow-xl shadow-slate-100 transition-all transform active:scale-95"
             >
-                Confirm Calibration
+                Confirm Calibrations
             </button>
             {isEditingProfile && (
-                <button onClick={() => setIsEditingProfile(false)} className="w-full text-[10px] font-bold text-slate-300 uppercase mt-2">Discard Changes</button>
+                <button onClick={() => setIsEditingProfile(false)} className="w-full text-[10px] font-bold text-slate-300 uppercase tracking-[0.4em] mt-4">Discard</button>
             )}
         </div>
       </div>
     );
   }
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-32 gap-6 animate-in">
-        <div className="w-12 h-12 rounded-full border-2 border-slate-100 border-t-indigo-500 animate-spin"></div>
-        <p className="text-[10px] font-bold text-slate-300 uppercase tracking-[0.4em]">Executing Radar Sweep</p>
-      </div>
-    );
-  }
-
   if (!match) {
     return (
-      <div className="text-center py-32 space-y-6 animate-in">
-        <h2 className="text-6xl font-thin tracking-tighter text-slate-100">Zero.</h2>
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest text-balance max-w-xs mx-auto">No roles worth your attention right now.</p>
-        <button onClick={() => setIsEditingProfile(true)} className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest underline decoration-2 underline-offset-4">Adjust Search Parameters</button>
+      <div className="text-center py-40 space-y-8 animate-in">
+        <h2 className="text-7xl font-thin tracking-tighter text-slate-100 select-none">Void.</h2>
+        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.4em] max-w-xs mx-auto leading-relaxed">No high-probability signals detected in current range.</p>
+        <button onClick={() => setIsEditingProfile(true)} className="px-8 py-3 bg-slate-50 text-[10px] font-bold text-indigo-500 uppercase tracking-widest rounded-full hover:bg-indigo-50 transition-colors">Broaden Scope</button>
       </div>
     );
   }
 
   return (
-    <div className="space-y-10 w-full animate-in">
+    <div className="space-y-12 w-full animate-in">
       <div className="flex justify-between items-start">
-        <div className="space-y-1">
-            <p className="text-[9px] font-bold text-slate-300 uppercase tracking-[0.4em]">Optimized Match</p>
-            <h2 className="text-4xl sm:text-5xl font-bold tracking-tighter leading-none">{match.job.title}</h2>
-            <p className="text-xl text-slate-400 font-medium tracking-tight">{match.job.company}</p>
+        <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <p className="text-[10px] font-bold text-slate-300 uppercase tracking-[0.5em]">Primary Target</p>
+              {aiSyncing && <span className="text-[8px] font-bold text-indigo-400 animate-pulse">SYNCING...</span>}
+            </div>
+            <h2 className="text-5xl sm:text-6xl font-black tracking-tighter leading-[0.9] text-slate-900">{match.job.title}</h2>
+            <p className="text-2xl text-slate-400 font-bold tracking-tight">{match.job.company}</p>
         </div>
         <button 
             onClick={() => setIsEditingProfile(true)}
-            className="text-[9px] font-bold text-slate-300 border border-slate-100 px-3 py-1 rounded-full hover:border-indigo-200 hover:text-indigo-400 transition-colors"
+            className="text-[9px] font-bold text-slate-400 border border-slate-100 px-4 py-2 rounded-full hover:bg-slate-50 transition-colors uppercase tracking-widest"
         >
-            Edit Profile
+            Edit
         </button>
       </div>
 
-      <div className="flex items-center gap-2 bg-slate-50 px-4 py-2 rounded-full w-fit">
-        <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></div>
-        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-            Evaluated {match.totalEvaluated} opportunities. Showing the best available match.
+      <div className="bg-slate-50/50 px-6 py-3 rounded-full w-fit flex items-center gap-3">
+        <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div>
+        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+            Scanned {match.totalEvaluated} Roles • Showing #1 Rank
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-8 py-10 border-y border-slate-50">
-        <div className="space-y-1">
-          <p className="text-[9px] font-bold text-slate-300 uppercase tracking-widest">Geo Node</p>
-          <p className="font-semibold text-slate-600 text-lg">{match.job.location}</p>
+      <div className="grid grid-cols-2 gap-10 py-12 border-y border-slate-50">
+        <div className="space-y-2">
+          <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Geo node</p>
+          <p className="font-bold text-slate-700 text-xl tracking-tight">{match.job.location}</p>
         </div>
-        <div className="space-y-1">
-          <p className="text-[9px] font-bold text-slate-300 uppercase tracking-widest">Yield / Year</p>
-          <p className="font-semibold text-slate-600 text-lg">₹{(match.job.salary / 100000).toFixed(1)}L</p>
+        <div className="space-y-2">
+          <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Yield</p>
+          <p className="font-bold text-slate-700 text-xl tracking-tight">₹{(match.job.salary / 100000).toFixed(1)}L <span className="text-slate-400 text-xs font-medium">/ annum</span></p>
         </div>
       </div>
 
-      <section className="space-y-4">
-        <h3 className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">OS Recommendation</h3>
-        <p className="text-xl text-slate-700 leading-relaxed font-medium italic">
-          {match.aiAnalysis}
+      <section className="space-y-6">
+        <h3 className="text-[10px] font-bold text-indigo-400 uppercase tracking-[0.5em]">Agent Intelligence</h3>
+        <p className="text-2xl font-medium italic leading-snug text-slate-800">
+          "{match.aiAnalysis}"
         </p>
       </section>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
         {match.missingSkills.length > 0 && (
-            <section className="bg-slate-50 p-6 rounded-[40px] space-y-3">
-            <h3 className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.2em]">Competency Gaps</h3>
+            <section className="bg-slate-50 p-8 rounded-[48px] space-y-4">
+            <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Capability Gaps</h3>
             <div className="flex flex-wrap gap-2">
                 {match.missingSkills.map(s => (
-                <span key={s} className="px-3 py-1 bg-white border border-slate-100 rounded-full text-[10px] font-bold text-slate-400 uppercase tracking-wide">{s}</span>
+                <span key={s} className="px-4 py-2 bg-white border border-slate-100 rounded-full text-[10px] font-bold text-slate-400 uppercase tracking-wide">{s}</span>
                 ))}
             </div>
             </section>
         )}
         
-        <div className="bg-indigo-50/30 p-6 rounded-[40px] flex flex-col justify-center items-center text-center space-y-1">
-            <p className="text-[9px] font-bold text-indigo-300 uppercase tracking-[0.3em]">Fit Probability</p>
-            <p className={`text-2xl font-black ${match.probability === 'High' ? 'text-indigo-600' : 'text-slate-400'}`}>
+        <div className="bg-indigo-50/20 p-8 rounded-[48px] flex flex-col justify-center items-center text-center space-y-2">
+            <p className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest">Fit Vector</p>
+            <p className={`text-4xl font-black tracking-tighter ${match.probability === 'High' ? 'text-indigo-600' : 'text-slate-500'}`}>
                 {match.probability}
             </p>
         </div>
@@ -235,9 +197,9 @@ const CareerView: React.FC<{ profile: UserProfile }> = ({ profile: initialProfil
 
       <button
         onClick={() => window.open(match.job.applyUrl, '_blank')}
-        className="w-full bg-slate-900 text-white py-6 rounded-[40px] text-lg font-bold shadow-2xl hover:bg-indigo-600 transition-all duration-300 transform hover:-translate-y-1 active:scale-[0.98]"
+        className="w-full bg-slate-900 text-white py-8 rounded-[48px] text-xl font-bold shadow-2xl shadow-slate-200 hover:bg-indigo-600 transition-all transform hover:-translate-y-1 active:scale-[0.98]"
       >
-        Initiate Application
+        Initialize Application
       </button>
     </div>
   );

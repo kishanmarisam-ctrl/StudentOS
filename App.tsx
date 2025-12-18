@@ -4,23 +4,18 @@ import StudyView from './components/StudyView';
 import CareerView from './components/CareerView';
 import { UserProfile, StudentMode } from './types';
 
-const App: React.FC = () => {
-  const [isInitializing, setIsInitializing] = useState(true);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [mode, setMode] = useState<StudentMode>(StudentMode.STUDY);
+const getSavedProfile = (): UserProfile | null => {
+  try {
+    const saved = localStorage.getItem('studentOS_profile');
+    return saved ? JSON.parse(saved) : null;
+  } catch {
+    return null;
+  }
+};
 
-  useEffect(() => {
-    // Immediate state restoration
-    try {
-      const saved = localStorage.getItem('studentOS_profile');
-      if (saved) {
-        setProfile(JSON.parse(saved));
-      }
-    } catch (e) {
-      console.error("Failed to load profile", e);
-    }
-    setIsInitializing(false);
-  }, []);
+const App: React.FC = () => {
+  const [profile, setProfile] = useState<UserProfile | null>(getSavedProfile);
+  const [mode, setMode] = useState<StudentMode>(StudentMode.STUDY);
 
   const handleOnboardingComplete = (newProfile: UserProfile) => {
     const fullProfile = { ...newProfile, onboarded: true };
@@ -34,36 +29,31 @@ const App: React.FC = () => {
     setMode(StudentMode.STUDY);
   };
 
-  if (isInitializing) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-white text-slate-400 font-medium">
-        System Initializing...
-      </div>
-    );
-  }
-
   const showOnboarding = !profile || !profile.onboarded;
 
   return (
     <div className="min-h-screen bg-white text-slate-900 selection:bg-indigo-100 font-sans flex flex-col">
-      {/* Debug Mode Banner - Required for visibility check */}
+      {/* Environment Status Banner */}
       <div className="w-full bg-slate-50 border-b border-slate-100 py-1.5 px-4 flex justify-between items-center z-50">
-        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-          Environment: {showOnboarding ? 'Onboarding' : `Active / Mode: ${mode}`}
+        <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">
+          StudentOS v1.0 • {showOnboarding ? 'CALIBRATION' : mode.toUpperCase()}
         </span>
-        <div className="flex gap-2">
-           <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+        <div className="flex items-center gap-1.5">
+          {!process.env.API_KEY && (
+            <span className="text-[8px] font-bold text-orange-400 border border-orange-100 px-1.5 py-0.5 rounded">OFFLINE MODE</span>
+          )}
+          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
         </div>
       </div>
 
       {!showOnboarding && (
-        <nav className="max-w-2xl w-full mx-auto px-6 pt-8 pb-4 flex flex-col items-center gap-4">
-          <h1 className="text-xl font-bold tracking-tight text-slate-300">StudentOS</h1>
+        <nav className="max-w-2xl w-full mx-auto px-6 pt-10 pb-6 flex flex-col items-center gap-6">
+          <h1 className="text-2xl font-black tracking-tighter text-slate-900">StudentOS</h1>
           
-          <div className="flex items-center bg-slate-50 p-1 rounded-full border border-slate-100 shadow-sm w-48">
+          <div className="flex items-center bg-slate-100/50 p-1 rounded-full border border-slate-100 shadow-sm w-56">
             <button
               onClick={() => setMode(StudentMode.STUDY)}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-full transition-all ${
+              className={`flex-1 py-2 text-[10px] font-bold uppercase tracking-wider rounded-full transition-all ${
                 mode === StudentMode.STUDY ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'
               }`}
             >
@@ -71,7 +61,7 @@ const App: React.FC = () => {
             </button>
             <button
               onClick={() => setMode(StudentMode.CAREER)}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-full transition-all ${
+              className={`flex-1 py-2 text-[10px] font-bold uppercase tracking-wider rounded-full transition-all ${
                 mode === StudentMode.CAREER ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'
               }`}
             >
@@ -86,7 +76,7 @@ const App: React.FC = () => {
         {showOnboarding ? (
           <Onboarding onComplete={handleOnboardingComplete} />
         ) : (
-          <div className="w-full h-full">
+          <div className="w-full">
             {mode === StudentMode.STUDY ? (
               <StudyView profile={profile} />
             ) : (
@@ -96,10 +86,10 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {/* Subtle Reset Link */}
-      <footer className="w-full flex justify-center py-6 bg-white">
-        <button onClick={resetProfile} className="text-[9px] uppercase tracking-[0.3em] text-slate-300 hover:text-slate-500 transition-colors font-bold">
-          Purge Environment
+      {/* Persistent Reset Control */}
+      <footer className="w-full flex justify-center py-8 bg-white border-t border-slate-50">
+        <button onClick={resetProfile} className="text-[8px] uppercase tracking-[0.5em] text-slate-200 hover:text-slate-400 transition-colors font-bold">
+          System Factory Reset
         </button>
       </footer>
     </div>
